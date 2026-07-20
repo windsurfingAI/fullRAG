@@ -16,7 +16,7 @@ except Exception:
     gemini_client = None
 
 # 2. Initialisation de ChromaDB (Local)
-chroma_client = chromadb.PersistentClient(path="./chroma_db")
+chroma_client = chromadb.PersistentClient(path="./data/chroma_db")
 
 # 3. Initialisation du Reranker (Local & Léger)
 # Télécharge un modèle de reranking au premier lancement (~200 Mo) et s'exécute en local

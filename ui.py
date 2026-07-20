@@ -1,5 +1,11 @@
 import streamlit as st
 import requests
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000/chat")
 
 st.set_page_config(page_title="RAG Local & Gratuit", layout="centered")
 st.title("🤖 Chatbot Multi-Modèles")
@@ -32,7 +38,7 @@ if user_query := st.chat_input("Posez votre question..."):
         with st.spinner(f"Réflexion avec {provider.capitalize()}..."):
             try:
                 response = requests.post(
-                    "http://localhost:8000/chat",
+                    BACKEND_URL,
                     json={
                         "query": user_query,
                         "provider": provider,

@@ -10,16 +10,15 @@ services:
     env_file:
       - .env
     volumes:
-      - chroma_data:/app/chroma_db
+      - ./data:/app/data
     networks:
       - chatbot_network
-
   frontend:
     build:
       context: .
       dockerfile: frontend/Dockerfile
     ports:
-      - "8501:8501"
+      - "8502:8501"
     environment:
       - BACKEND_URL=http://backend:8000/chat
     networks:
