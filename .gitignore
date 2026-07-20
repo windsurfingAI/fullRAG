@@ -1,0 +1,19 @@
+# Environnements virtuels
+.venv/
+venv/
+ENV/
+
+# Variables d'environnement / Secrets
+.env
+.env.*
+
+# Base de données locale ChromaDB
+backend/chroma_db/
+
+# Téléchargements du modèle de Reranking (Cache HuggingFace)
+.cache/
+
+# Python et OS
+__pycache__/
+*.pyc
+.DS_Store

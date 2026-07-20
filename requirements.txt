@@ -1,0 +1,9 @@
+fastapi==0.111.0
+uvicorn==0.30.1
+pydantic==2.7.4
+streamlit==1.36.0
+chromadb==0.5.3
+google-genai==0.1.1
+sentence-transformers==3.0.1
+requests==2.32.3
+python-dotenv==1.0.1

@@ -1,0 +1,54 @@
+name: Chatbot CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout du code
+      uses: actions/checkout@v4
+
+    - name: Configurer Python
+      uses: actions/setup-python@v5
+      with:
+        python-network: '3.11'
+        cache: 'pip'
+
+    - name: Installer les dépendances pour vérification
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8
+        
+    - name: Lint du code avec Flake8
+      run: |
+        # Arrête le build s'il y a des erreurs de syntaxe Python
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+
+  build-images:
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout du code
+      uses: actions/checkout@v4
+
+    - name: Configurer Docker Buildx
+      uses: actions/setup-docker@v3
+
+    - name: Tester le Build de l'image Backend
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: backend/Dockerfile
+        push: false # Ne pousse pas sur un registre public (DockerHub) pour le test
+
+    - name: Tester le Build de l'image Frontend
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: frontend/Dockerfile
+        push: false
