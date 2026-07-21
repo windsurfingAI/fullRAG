@@ -19,5 +19,6 @@ __pycache__/
 .DS_Store
 
 # data
-data/
+data/raw/
+data/chroma_db/
 *.csv
