@@ -42,7 +42,7 @@ if user_query := st.chat_input("Posez votre question..."):
                     json={
                         "query": user_query,
                         "provider": provider,
-                        "top_k": 5
+                        "top_k": 10
                     }
                 )
                 

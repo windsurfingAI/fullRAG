@@ -39,7 +39,7 @@ async def handle_chat(request: ChatRequest):
         collection = chroma_client.get_or_create_collection(name="documents")
         search_results = collection.query(
             query_texts=[request.query],
-            n_results=10  # On récupère une base large de 10 candidats
+            n_results=15  # On récupère une base large de 10 candidats
         )
         
         documents = search_results.get("documents", [[]])[0]
@@ -53,7 +53,7 @@ async def handle_chat(request: ChatRequest):
         
         # On trie les documents selon le score obtenu et on garde les 3 meilleurs
         scored_docs = sorted(zip(documents, scores), key=lambda x: x[1], reverse=True)
-        reranked_docs = [doc for doc, score in scored_docs[:3]]
+        reranked_docs = [doc for doc, score in scored_docs[:6]]
 
         # Étape 3 : Construction du prompt RAG
         context = "\n\n".join(reranked_docs)
