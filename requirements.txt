@@ -1,9 +1,24 @@
+# Framework Web & UI
 fastapi==0.111.0
 uvicorn==0.30.1
 pydantic==2.7.4
 streamlit==1.36.0
+
+# Base de données Vectorielle & LLM
 chromadb==0.5.3
 google-genai>=0.1.0
+
+# Modèles d'Embeddings & Reranking
 sentence-transformers==3.0.1
+torch
+
+# Recherche Hybride (BM25 + LangChain)
+langchain
+langchain-community
+langchain-huggingface
+rank_bm25
+
+# Utilitaires & Data
+pandas
 requests==2.32.3
 python-dotenv==1.0.1
