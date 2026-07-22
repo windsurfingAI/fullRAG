@@ -11,9 +11,13 @@ OUTPUT_JSON_PATH = os.path.join(BASE_DIR, "synthetic_testset.json")
 
 # URL de l'instance Ollama locale
 OLLAMA_URL = os.environ.get("OLLAMA_HOST", "http://localhost:11434") + "/api/generate"
-MODEL_NAME = "mistral"
-MODEL_NAME = "qwen2.5:7b"
 
+# 🎲 Pool des 3 modèles à faire tourner en alternance
+MODELS_POOL = [
+    "qwen2.5:7b",
+    "mistral-nemo",
+    "deepseek-r1:7b"
+]
 
 if not os.path.exists(CSV_FILE_PATH):
     raise FileNotFoundError(f"❌ Fichier introuvable : {CSV_FILE_PATH}")
@@ -27,12 +31,16 @@ sampled_df = df.sample(n=min(SAMPLE_SIZE, len(df)), random_state=42)
 generated_dataset = []
 QUERY_TYPES = ["question_imperfaite", "titre_seul", "realisateur_seul"]
 
-print(f"🤖 Connexion à Ollama local ({MODEL_NAME})...")
-print(f"🚀 Génération de {len(sampled_df)} paires de test réalistes...")
+print(f"🤖 Connexion à Ollama local sur {OLLAMA_URL}...")
+print(f"🎭 Pool de modèles utilisé : {', '.join(MODELS_POOL)}")
+print(f"🚀 Génération de {len(sampled_df)} paires de test réalistes...\n")
 
 for idx, row in sampled_df.iterrows():
     film_info = "\n".join([f"{col}: {val}" for col, val in row.items() if str(val).strip()])
     query_type = random.choice(QUERY_TYPES)
+    
+    # 🎲 Sélection aléatoire du modèle pour ce film
+    selected_model = random.choice(MODELS_POOL)
     
     prompt = f"""[INST] Tu es un générateur de données de test pour un système RAG de cinéma.
 À partir de la fiche du film ci-dessous, génère UNE requête d'utilisateur et la RÉPONSE exacte (ground_truth) basée uniquement sur la fiche.
@@ -58,37 +66,46 @@ Réponds STRICTEMENT sous forme d'un objet JSON valide au format suivant, sans a
 }} [/INST]"""
 
     try:
-        # Appel API à Ollama local
+        # Appel API à Ollama local avec le modèle tiré au sort
         response = requests.post(
             OLLAMA_URL,
             json={
-                "model": MODEL_NAME,
+                "model": selected_model,
                 "prompt": prompt,
                 "format": "json",  # Force Ollama à répondre en JSON valide
                 "stream": False
             },
-            timeout=60
+            timeout=90  # Timeout légèrement allongé pour les modèles plus volumineux
         )
         
         if response.status_code == 200:
-            raw_text = response.json().get("response", "")
+            raw_text = response.json().get("response", "").strip()
+            
+            # Nettoyage si DeepSeek inclut ses balises de réflexion interne <think>...</think>
+            if "<think>" in raw_text:
+                raw_text = raw_text.split("</think>")[-1].strip()
+                
             qa_pair = json.loads(raw_text)
             
             generated_dataset.append({
+                "generator_model": selected_model,  # Métadonnée pour savoir quel modèle a généré la question
                 "type": qa_pair.get("type", query_type),
                 "question": qa_pair["question"],
                 "ground_truth": qa_pair["ground_truth"],
                 "film_id": int(idx)
             })
             
-            print(f"  └─ [{len(generated_dataset)}/{len(sampled_df)}] [{query_type}] -> \"{qa_pair['question']}\"")
+            print(f"  └─ [{len(generated_dataset)}/{len(sampled_df)}] [{selected_model}] [{query_type}] -> \"{qa_pair['question']}\"")
+        
+        elif response.status_code == 404:
+            print(f"⚠️ Modèle non trouvé ({selected_model}). Lancez 'ollama pull {selected_model}' dans votre terminal.")
         else:
-            print(f"⚠️ Erreur Ollama ({response.status_code}) pour le film {idx}")
+            print(f"⚠️ Erreur Ollama ({response.status_code}) avec {selected_model} pour le film {idx}")
 
     except requests.exceptions.ConnectionError:
         raise RuntimeError("❌ Impossible de contacter Ollama. Assurez-vous qu'Ollama est démarré avec 'ollama serve'.")
     except Exception as e:
-        print(f"⚠️ Erreur de parsing sur le film {idx} : {e}")
+        print(f"⚠️ Erreur de traitement avec {selected_model} sur le film {idx} : {e}")
 
 # 3. Sauvegarde
 with open(OUTPUT_JSON_PATH, "w", encoding="utf-8") as f:
