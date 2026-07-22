@@ -42,7 +42,7 @@ vectorstore = Chroma(
     collection_name=COLLECTION_NAME,
     embedding_function=embeddings
 )
-chroma_retriever = vectorstore.as_retriever(search_kwargs={"k": 15})
+chroma_retriever = vectorstore.as_retriever(search_kwargs={"k": 20})
 
 # B. Retriever Sparse (BM25 - Recherche par mots-clés exacts)
 all_data = vectorstore.get()
@@ -57,13 +57,13 @@ else:
 
 bm25_retriever = BM25Retriever.from_documents(all_docs) if all_docs else None
 if bm25_retriever:
-    bm25_retriever.k = 15
+    bm25_retriever.k = 25
 
 # C. Fusion Hybride (RRF)
 if bm25_retriever:
     hybrid_retriever = EnsembleRetriever(
         retrievers=[bm25_retriever, chroma_retriever],
-        weights=[0.5, 0.5]  # 50% BM25, 50% Vecteur
+        weights=[0.3, 0.7]  # 50% BM25, 50% Vecteur
     )
 else:
     hybrid_retriever = chroma_retriever
