@@ -22,3 +22,6 @@ rank_bm25
 pandas
 requests==2.32.3
 python-dotenv==1.0.1
+
+# Gestion Mem
+redis==5.0.1

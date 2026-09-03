@@ -1,6 +1,8 @@
 import os
+import json
+import redis # [NOUVEAU] Pour la mémoire court terme
 import requests
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel
 from google import genai
 
@@ -14,7 +16,19 @@ from langchain_core.documents import Document
 # Dépendance pour le Reranking
 from sentence_transformers import CrossEncoder
 
-app = FastAPI(title="Local & Free RAG Orchestrator (Hybrid Search)")
+app = FastAPI(title="Local & Free RAG Orchestrator (Hybrid Search + Memory)")
+
+# ---------------------------------------------------------
+# [NOUVEAU] INITIALISATION DE REDIS (Mémoire de session Docker)
+# Dans un docker-compose, le host sera généralement 'redis'
+# ---------------------------------------------------------
+REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
+try:
+    redis_client = redis.Redis(host=REDIS_HOST, port=6379, db=0, decode_responses=True)
+    WINDOW_SIZE = 4 # On garde les 4 derniers échanges
+except Exception as e:
+    print(f"⚠️ Erreur de connexion à Redis : {e}")
+    redis_client = None
 
 # 1. Initialisation de Gemini (Cloud)
 try:
@@ -27,55 +41,49 @@ CHROMA_PATH = "./data/chroma_db"
 COLLECTION_NAME = "documents"
 MODEL_NAME = "all-MiniLM-L6-v2"
 
-# Initialisation du modèle d'embedding pour LangChain Chroma
 embeddings = HuggingFaceEmbeddings(
     model_name=MODEL_NAME,
     model_kwargs={'device': 'cuda' if os.environ.get("CUDA_VISIBLE_DEVICES") else 'cpu'}
 )
 
 # 3. Initialisation du Retriever Hybride (ChromaDB + BM25)
+# [Le code du retriever reste identique à ton original...]
 print("🔄 Initialisation de la recherche hybride (ChromaDB + BM25)...")
-
-# A. Retriever Dense (ChromaDB)
-vectorstore = Chroma(
-    persist_directory=CHROMA_PATH,
-    collection_name=COLLECTION_NAME,
-    embedding_function=embeddings
-)
+vectorstore = Chroma(persist_directory=CHROMA_PATH, collection_name=COLLECTION_NAME, embedding_function=embeddings)
 chroma_retriever = vectorstore.as_retriever(search_kwargs={"k": 20})
-
-# B. Retriever Sparse (BM25 - Recherche par mots-clés exacts)
 all_data = vectorstore.get()
+
 if not all_data or not all_data.get('documents'):
-    print("⚠️ Attention: Aucun document trouvé dans ChromaDB. Assurez-vous d'avoir exécuté ingest_csv.py.")
     all_docs = []
 else:
-    all_docs = [
-        Document(page_content=text, metadata=meta) 
-        for text, meta in zip(all_data['documents'], all_data['metadatas'])
-    ]
+    all_docs = [Document(page_content=t, metadata=m) for t, m in zip(all_data['documents'], all_data['metadatas'])]
 
 bm25_retriever = BM25Retriever.from_documents(all_docs) if all_docs else None
 if bm25_retriever:
     bm25_retriever.k = 25
-
-# C. Fusion Hybride (RRF)
-if bm25_retriever:
-    hybrid_retriever = EnsembleRetriever(
-        retrievers=[bm25_retriever, chroma_retriever],
-        weights=[0.3, 0.7]  # 50% BM25, 50% Vecteur
-    )
+    hybrid_retriever = EnsembleRetriever(retrievers=[bm25_retriever, chroma_retriever], weights=[0.3, 0.7])
 else:
     hybrid_retriever = chroma_retriever
 
 # 4. Initialisation du Reranker (Local)
 reranker = CrossEncoder("BAAI/bge-reranker-base")
 
-# Schémas de données
+# ---------------------------------------------------------
+# [NOUVEAU] SCHÉMAS DE DONNÉES MIS À JOUR
+# ---------------------------------------------------------
+class UserProfile(BaseModel):
+    # Représente les claims extraits du JWT (SSO) en entreprise
+    name: str = "Utilisateur Anonyme"
+    role: str = "Collaborateur"
+    department: str = "Général"
+    clearance: str = "Standard"
+
 class ChatRequest(BaseModel):
+    session_id: str  # [NOUVEAU] Obligatoire pour retrouver la conversation
     query: str
-    provider: str = "gemini"  # 'gemini' ou 'mistral'
+    provider: str = "gemini" 
     top_k: int = 5
+    user_profile: UserProfile = UserProfile() # [NOUVEAU] Mémoire Long terme (SSO)
 
 class ChatResponse(BaseModel):
     answer: str
@@ -84,68 +92,93 @@ class ChatResponse(BaseModel):
 @app.post("/chat", response_model=ChatResponse)
 async def handle_chat(request: ChatRequest):
     try:
-        # Étape 1 : Recherche Hybride (Recoupe les résultats BM25 exacts + la proximité vectorielle)
+        # Étape 1 : Recherche Hybride
         retrieved_docs = hybrid_retriever.invoke(request.query)
-        
-        # Extraction du texte des documents récupérés
         documents = [doc.page_content for doc in retrieved_docs]
         
         if not documents:
             raise HTTPException(status_code=404, detail="Aucun document trouvé dans la base.")
 
         # Étape 2 : Reranking Local
-        # Le Reranker affine le classement du Retriever Hybride
         pairs = [[request.query, doc] for doc in documents]
         scores = reranker.predict(pairs)
-        
-        # Tri selon le score et sélection des meilleurs résultats (par défaut top 6)
         scored_docs = sorted(zip(documents, scores), key=lambda x: x[1], reverse=True)
         reranked_docs = [doc for doc, score in scored_docs[:6]]
 
-        # Étape 3 : Construction du prompt RAG
-        context = "\n\n".join(reranked_docs)
-        prompt = f"""Réponds à la question en te basant uniquement sur le contexte fourni ci-dessous.
+        # ---------------------------------------------------------
+        # [NOUVEAU] ÉTAPE 2.5 : GESTION DES MÉMOIRES (LONG & COURT TERME)
+        # ---------------------------------------------------------
         
-Contexte:
+        # A. Mémoire Long Terme (Injection dynamique du contexte SSO)
+        system_context = f"""Tu es un assistant RAG d'entreprise expert.
+INFORMATIONS SUR L'UTILISATEUR ACTUEL :
+- Nom : {request.user_profile.name}
+- Rôle : {request.user_profile.role}
+- Département : {request.user_profile.department}
+Adapte tes réponses en fonction de ce profil métier."""
+
+        # B. Mémoire Court Terme (Récupération Redis)
+        chat_history = []
+        history_text = "Aucun historique pour le moment."
+        redis_key = f"session:{request.session_id}"
+        
+        if redis_client:
+            history_json = redis_client.get(redis_key)
+            if history_json:
+                chat_history = json.loads(history_json)
+                history_text = "\n".join([f"{msg['role']}: {msg['content']}" for msg in chat_history])
+
+        # Étape 3 : Construction du prompt RAG unifié
+        context = "\n\n".join(reranked_docs)
+        prompt = f"""{system_context}
+        
+HISTORIQUE DE LA CONVERSATION :
+{history_text}
+
+CONTEXTE DOCUMENTAIRE (RAG) :
 {context}
 
-Question: {request.query}
-Réponse:"""
+INSTRUCTION :
+Réponds à la nouvelle question en te basant UNIQUEMENT sur le contexte documentaire fourni. 
+Si la réponse ne s'y trouve pas, dis-le. Prends en compte l'historique si la question contient des pronoms.
 
-        # Étape 4 : Génération de la réponse selon le fournisseur choisi
+Nouvelle question : {request.query}
+Réponse :"""
+
+        # Étape 4 : Génération de la réponse
         if request.provider == "gemini":
             if not gemini_client:
                 raise HTTPException(status_code=500, detail="Clé API Gemini non configurée.")
-            
-            response = gemini_client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=prompt,
-            )
+            response = gemini_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
             answer = response.text
 
         elif request.provider == "mistral":
-            try:
-                # Utiliser le nom du service Docker 'ollama' au lieu de 'localhost' si vous êtes dans un conteneur Docker
-                ollama_url = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-                ollama_response = requests.post(
-                    f"{ollama_url}/api/generate",
-                    json={
-                        "model": "mistral",
-                        "prompt": prompt,
-                        "stream": False
-                    }
-                )
-                if ollama_response.status_code == 200:
-                    answer = ollama_response.json().get("response", "")
-                else:
-                    raise HTTPException(status_code=500, detail="Erreur lors de l'appel à Ollama.")
-            except requests.exceptions.ConnectionError:
-                raise HTTPException(
-                    status_code=500, 
-                    detail="Impossible de contacter Ollama. Vérifiez que le service tourne correctement."
-                )
+            ollama_url = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+            ollama_response = requests.post(
+                f"{ollama_url}/api/generate",
+                json={"model": "mistral", "prompt": prompt, "stream": False}
+            )
+            if ollama_response.status_code == 200:
+                answer = ollama_response.json().get("response", "")
+            else:
+                raise HTTPException(status_code=500, detail="Erreur lors de l'appel à Ollama.")
         else:
-            raise HTTPException(status_code=400, detail="Fournisseur d'IA non supporté.")
+            raise HTTPException(status_code=400, detail="Fournisseur non supporté.")
+
+        # ---------------------------------------------------------
+        # [NOUVEAU] ÉTAPE 5 : SAUVEGARDE DE LA SESSION
+        # ---------------------------------------------------------
+        if redis_client:
+            # Ajout du nouveau tour de parole
+            chat_history.append({"role": "Utilisateur", "content": request.query})
+            chat_history.append({"role": "Assistant", "content": answer})
+            
+            # Application de la fenêtre glissante (on garde N paires de questions/réponses)
+            if len(chat_history) > (WINDOW_SIZE * 2):
+                chat_history = chat_history[-(WINDOW_SIZE * 2):]
+                
+            # Sauvegarde avec TTL (expiration après 2 heures d'inactivité)
+            redis_client.set(redis_key, json.dumps(chat_history), ex=7200)
 
         return ChatResponse(
             answer=answer,

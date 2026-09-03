@@ -31,3 +31,8 @@ volumes:
 
 networks:
   chatbot_network:
+
+redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
