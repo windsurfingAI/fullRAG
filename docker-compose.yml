@@ -7,12 +7,17 @@ services:
       dockerfile: backend/Dockerfile
     ports:
       - "8000:8000"
+    environment:
+      - REDIS_HOST=redis
     env_file:
       - .env
     volumes:
       - ./data:/app/data
     networks:
       - chatbot_network
+    depends_on:
+      - redis
+
   frontend:
     build:
       context: .
@@ -26,13 +31,15 @@ services:
     depends_on:
       - backend
 
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - chatbot_network
+
 volumes:
   chroma_data:
 
 networks:
   chatbot_network:
-
-redis:
-    image: redis:alpine
-    ports:
-      - "6379:6379"
