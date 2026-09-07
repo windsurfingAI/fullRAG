@@ -3,20 +3,25 @@ version: '3.8'
 services:
   backend:
     build:
-      context: .
-      dockerfile: backend/Dockerfile
+      context: ./backend
+      dockerfile: Dockerfile
     ports:
       - "8000:8000"
+    environment:
+      - REDIS_HOST=redis
     env_file:
       - .env
     volumes:
       - ./data:/app/data
     networks:
       - chatbot_network
+    depends_on:
+      - redis
+
   frontend:
     build:
-      context: .
-      dockerfile: frontend/Dockerfile
+      context: ./frontend
+      dockerfile: Dockerfile
     ports:
       - "8502:8501"
     environment:
@@ -26,8 +31,12 @@ services:
     depends_on:
       - backend
 
-volumes:
-  chroma_data:
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - chatbot_network
 
 networks:
   chatbot_network:

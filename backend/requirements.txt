@@ -1,0 +1,23 @@
+# API & Validation
+fastapi==0.111.0
+uvicorn==0.30.1
+pydantic==2.7.4
+
+# Base vectorielle & LLM
+chromadb==0.5.3
+google-genai>=0.1.0
+
+# Modèles d'embeddings & reranking
+sentence-transformers==3.0.1
+torch
+
+# Recherche hybride
+langchain==0.1.20
+langchain-community==0.0.38
+langchain-huggingface
+rank_bm25
+
+# Données & cache
+pandas
+redis==5.0.1
+python-dotenv==1.0.1

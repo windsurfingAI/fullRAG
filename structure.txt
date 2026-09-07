@@ -1,0 +1,38 @@
+.
+├── app.py
+├── backend
+│   └── Dockerfile
+├── data
+│   ├── chroma_db
+│   │   ├── 402dd703-3723-4dcc-8615-d3dcc832e5c3
+│   │   │   ├── data_level0.bin
+│   │   │   ├── header.bin
+│   │   │   ├── index_metadata.pickle
+│   │   │   ├── length.bin
+│   │   │   └── link_lists.bin
+│   │   ├── chroma.sqlite3
+│   │   └── d3d6f558-5f47-47e2-a9ca-acee8ff5993b
+│   │       ├── data_level0.bin
+│   │       ├── header.bin
+│   │       ├── index_metadata.pickle
+│   │       ├── length.bin
+│   │       └── link_lists.bin
+│   ├── ingest_csv.py
+│   └── raw
+│       └── liste-des-films-sortis-dans-les-salles-de-cinema-en-france-de-1945-a-2025.csv
+├── docker-compose.yml
+├── evaluation
+│   ├── evaluate_rag.py
+│   ├── generate_testset_mistral.py
+│   ├── generate_testset.py
+│   ├── synthetic_testset.json
+│   └── synthetic_testset_varied.json
+├── frontend
+│   └── Dockerfile
+├── hybrid_search.py
+├── README.md
+├── requirements.txt
+├── structure.txt
+└── ui.py
+
+8 directories, 27 files

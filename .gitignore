@@ -22,3 +22,6 @@ __pycache__/
 data/raw/
 data/chroma_db/
 *.csv
+
+# evaluation
+*.json

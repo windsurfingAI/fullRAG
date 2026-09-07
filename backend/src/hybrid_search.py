@@ -31,7 +31,7 @@ def get_hybrid_retriever(chroma_path="data/chroma_db", collection_name="document
     # 3. Fusion Hybride
     hybrid_retriever = EnsembleRetriever(
         retrievers=[bm25_retriever, chroma_retriever],
-        weights=[0.5, 0.5]
+        weights=[0.3, 0.7]
     )
     
     return hybrid_retriever
