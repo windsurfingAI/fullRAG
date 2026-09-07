@@ -16,6 +16,10 @@ from langchain_core.documents import Document
 # Dépendance pour le Reranking
 from sentence_transformers import CrossEncoder
 
+# import query rewriter
+from query_rewriter import rewrite_query
+
+
 app = FastAPI(title="Local & Free RAG Orchestrator (Hybrid Search + Memory)")
 
 # ---------------------------------------------------------
@@ -92,32 +96,9 @@ class ChatResponse(BaseModel):
 @app.post("/chat", response_model=ChatResponse)
 async def handle_chat(request: ChatRequest):
     try:
-        # Étape 1 : Recherche Hybride
-        retrieved_docs = hybrid_retriever.invoke(request.query)
-        documents = [doc.page_content for doc in retrieved_docs]
-        
-        if not documents:
-            raise HTTPException(status_code=404, detail="Aucun document trouvé dans la base.")
-
-        # Étape 2 : Reranking Local
-        pairs = [[request.query, doc] for doc in documents]
-        scores = reranker.predict(pairs)
-        scored_docs = sorted(zip(documents, scores), key=lambda x: x[1], reverse=True)
-        reranked_docs = [doc for doc, score in scored_docs[:6]]
-
         # ---------------------------------------------------------
-        # [NOUVEAU] ÉTAPE 2.5 : GESTION DES MÉMOIRES (LONG & COURT TERME)
+        # ÉTAPE 1 : Récupération de l'historique Redis (Déplacé ici !)
         # ---------------------------------------------------------
-        
-        # A. Mémoire Long Terme (Injection dynamique du contexte SSO)
-        system_context = f"""Tu es un assistant RAG d'entreprise expert.
-INFORMATIONS SUR L'UTILISATEUR ACTUEL :
-- Nom : {request.user_profile.name}
-- Rôle : {request.user_profile.role}
-- Département : {request.user_profile.department}
-Adapte tes réponses en fonction de ce profil métier."""
-
-        # B. Mémoire Court Terme (Récupération Redis)
         chat_history = []
         history_text = "Aucun historique pour le moment."
         redis_key = f"session:{request.session_id}"
@@ -128,7 +109,48 @@ Adapte tes réponses en fonction de ce profil métier."""
                 chat_history = json.loads(history_json)
                 history_text = "\n".join([f"{msg['role']}: {msg['content']}" for msg in chat_history])
 
-        # Étape 3 : Construction du prompt RAG unifié
+        # ---------------------------------------------------------
+        # ÉTAPE 2 : Réécriture de la requête
+        # ---------------------------------------------------------
+        search_query = rewrite_query(
+            query=request.query, 
+            chat_history=chat_history, 
+            provider=request.provider, 
+            gemini_client=gemini_client
+        )
+        print(f"🔍 Requête originale : {request.query}")
+        print(f"✨ Requête réécrite  : {search_query}")
+
+        # ---------------------------------------------------------
+        # ÉTAPE 3 : Recherche Hybride (sur la requête réécrite)
+        # ---------------------------------------------------------
+        retrieved_docs = hybrid_retriever.invoke(search_query)
+        documents = [doc.page_content for doc in retrieved_docs]
+        
+        if not documents:
+            raise HTTPException(status_code=404, detail="Aucun document trouvé dans la base.")
+
+        # ---------------------------------------------------------
+        # ÉTAPE 4 : Reranking Local (sur la requête réécrite)
+        # ---------------------------------------------------------
+        pairs = [[search_query, doc] for doc in documents]
+        scores = reranker.predict(pairs)
+        scored_docs = sorted(zip(documents, scores), key=lambda x: x[1], reverse=True)
+        reranked_docs = [doc for doc, score in scored_docs[:6]]
+
+        # ---------------------------------------------------------
+        # ÉTAPE 5 : Mémoire Long Terme (Injection Profil SSO)
+        # ---------------------------------------------------------
+        system_context = f"""Tu es un assistant RAG d'entreprise expert.
+INFORMATIONS SUR L'UTILISATEUR ACTUEL :
+- Nom : {request.user_profile.name}
+- Rôle : {request.user_profile.role}
+- Département : {request.user_profile.department}
+Adapte tes réponses en fonction de ce profil métier."""
+
+        # ---------------------------------------------------------
+        # ÉTAPE 6 : Construction du prompt final
+        # ---------------------------------------------------------
         context = "\n\n".join(reranked_docs)
         prompt = f"""{system_context}
         
@@ -145,7 +167,9 @@ Si la réponse ne s'y trouve pas, dis-le. Prends en compte l'historique si la qu
 Nouvelle question : {request.query}
 Réponse :"""
 
-        # Étape 4 : Génération de la réponse
+        # ---------------------------------------------------------
+        # ÉTAPE 7 : Génération de la réponse
+        # ---------------------------------------------------------
         if request.provider == "gemini":
             if not gemini_client:
                 raise HTTPException(status_code=500, detail="Clé API Gemini non configurée.")
@@ -166,18 +190,18 @@ Réponse :"""
             raise HTTPException(status_code=400, detail="Fournisseur non supporté.")
 
         # ---------------------------------------------------------
-        # [NOUVEAU] ÉTAPE 5 : SAUVEGARDE DE LA SESSION
+        # ÉTAPE 8 : SAUVEGARDE DE LA SESSION
         # ---------------------------------------------------------
         if redis_client:
             # Ajout du nouveau tour de parole
             chat_history.append({"role": "Utilisateur", "content": request.query})
             chat_history.append({"role": "Assistant", "content": answer})
             
-            # Application de la fenêtre glissante (on garde N paires de questions/réponses)
+            # Application de la fenêtre glissante
             if len(chat_history) > (WINDOW_SIZE * 2):
                 chat_history = chat_history[-(WINDOW_SIZE * 2):]
                 
-            # Sauvegarde avec TTL (expiration après 2 heures d'inactivité)
+            # Sauvegarde avec TTL
             redis_client.set(redis_key, json.dumps(chat_history), ex=7200)
 
         return ChatResponse(

@@ -3,8 +3,8 @@ version: '3.8'
 services:
   backend:
     build:
-      context: .
-      dockerfile: backend/Dockerfile
+      context: ./backend
+      dockerfile: Dockerfile
     ports:
       - "8000:8000"
     environment:
@@ -20,8 +20,8 @@ services:
 
   frontend:
     build:
-      context: .
-      dockerfile: frontend/Dockerfile
+      context: ./frontend
+      dockerfile: Dockerfile
     ports:
       - "8502:8501"
     environment:
@@ -37,9 +37,6 @@ services:
       - "6379:6379"
     networks:
       - chatbot_network
-
-volumes:
-  chroma_data:
 
 networks:
   chatbot_network:
