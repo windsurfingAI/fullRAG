@@ -19,7 +19,7 @@ if "langchain_community.chat_models.vertexai" not in sys.modules:
     sys.modules["langchain_community.chat_models.vertexai"] = fake_vertexai
 # ------------------------------------------------
 
-from ragas import evaluate
+from ragas import evaluate, RunConfig
 from ragas.metrics import (
     context_precision,
     context_recall,
@@ -139,7 +139,8 @@ if USE_OLLAMA:
     llm_judge = ChatOllama(
         base_url=OLLAMA_BASE_URL,
         model=OLLAMA_MODEL,
-        temperature=0.0
+        temperature=0.0,
+        request_timeout=180.0
     )
     
     # Embeddings locaux via Ollama (assure-toi d'avoir fait: ollama pull nomic-embed-text)
@@ -164,11 +165,28 @@ else:
 evaluator_llm = LangchainLLMWrapper(llm_judge)
 evaluator_embeddings = LangchainEmbeddingsWrapper(emb_judge)
 
+# Configuration dynamique du débit et des timeouts
+if USE_OLLAMA:
+    print(f"⚙️ Configuration Ragas : Mode Local (timeout=180s, max_workers=1)")
+    run_config = RunConfig(
+        timeout=180,       # 3 min pour laisser le GPU local calculer sans couper
+        max_workers=1,     # 1 seule requête à la fois pour éviter d'engorger la file Ollama
+        max_retries=3
+    )
+else:
+    print("⚡ Configuration Ragas : Mode Cloud Pay-as-you-go (timeout=60s, max_workers=8)")
+    run_config = RunConfig(
+        timeout=60,
+        max_workers=8,     # 8 vérifications en parallèle pour finir en 1 à 2 min
+        max_retries=5
+    )
+
 eval_kwargs = {
     "dataset": dataset,
     "metrics": metrics,
     "llm": evaluator_llm,
-    "embeddings": evaluator_embeddings
+    "embeddings": evaluator_embeddings,
+    "run_config": run_config
 }
 
 results = evaluate(**eval_kwargs)
