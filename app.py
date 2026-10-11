@@ -11,6 +11,10 @@ from langchain_community.retrievers import BM25Retriever
 from langchain.retrievers import EnsembleRetriever
 from langchain_core.documents import Document
 
+# api key
+from dotenv import load_dotenv
+load_dotenv()
+
 # Dépendance pour le Reranking
 from sentence_transformers import CrossEncoder
 

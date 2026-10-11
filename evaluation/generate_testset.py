@@ -1,3 +1,4 @@
+# prompt envoyé en question chatbot directement (sans clé API)
 import os
 import json
 import time
