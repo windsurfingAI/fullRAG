@@ -5,7 +5,11 @@ import time
 import os
 import json
 import requests
+<<<<<<< HEAD
 import uuid
+=======
+import uuid    
+>>>>>>> 3c23fce (fastapi payload modification to chat with main backend)
 import pandas as pd
 from datasets import Dataset
 
@@ -71,6 +75,11 @@ print(f"🔄 Interrogation de l'API RAG ({RAG_API_URL}) avec le provider '{provi
 
 for item in testset:
     query = item["question"]
+<<<<<<< HEAD
+=======
+    
+    # --- NOUVEAU : Création d'une session unique pour éviter les biais de mémoire ---
+>>>>>>> 3c23fce (fastapi payload modification to chat with main backend)
     unique_session_id = str(uuid.uuid4())
 
     # Pause uniquement nécessaire si on est en cloud gratuit (Gemini)
@@ -78,6 +87,10 @@ for item in testset:
         time.sleep(4)
 
     try:
+<<<<<<< HEAD
+=======
+        # --- NOUVEAU : Payload adapté au nouveau backend main ---
+>>>>>>> 3c23fce (fastapi payload modification to chat with main backend)
         payload = {
             "session_id": unique_session_id,
             "query": query,
@@ -92,7 +105,11 @@ for item in testset:
 
         res = requests.post(
             RAG_API_URL, 
+<<<<<<< HEAD
             json=payload,
+=======
+            json=payload,  # <--- Utilisation du nouveau payload
+>>>>>>> 3c23fce (fastapi payload modification to chat with main backend)
             timeout=60
         )
         
@@ -117,7 +134,12 @@ for item in testset:
             
             print(f"  ✓ [{len(questions)}/{len(testset)}] Traité : {query[:45]}...")
         else:
+<<<<<<< HEAD
             print(f"⚠️ Erreur API ({res.status_code}) pour : '{query}' -> {res.text}")
+=======
+            # Utile pour débugger si l'API renvoie une erreur (ex: 422 Unprocessable Entity)
+            print(f"⚠️ Erreur API ({res.status_code}) pour : '{query}' -> Détail : {res.text}")
+>>>>>>> 3c23fce (fastapi payload modification to chat with main backend)
 
     except Exception as e:
         print(f"⚠️ Impossible de contacter l'API pour '{query}' : {e}")
