@@ -27,16 +27,18 @@
 │   ├── evaluate_rag.py
 │   ├── generate_testset_mistral.py
 │   ├── generate_testset.py
+│   ├── rag_evaluation_results.csv
 │   ├── README.md
 │   ├── synthetic_testset_3models.json
 │   ├── synthetic_testset_gemini.json
-│   └── synthetic_testset_varied.json
+│   └── synthetic_testset_varied_old.json
 ├── frontend
 │   └── Dockerfile
 ├── hybrid_search.py
 ├── README.md
 ├── requirements.txt
+├── structures.txt
 ├── structure.txt
 └── ui.py
 
-8 directories, 31 files
+8 directories, 33 files
