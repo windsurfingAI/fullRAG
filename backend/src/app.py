@@ -25,6 +25,7 @@ except ModuleNotFoundError:
 # --- LANGFUSE IMPORTS ---
 from langfuse import Langfuse
 from langfuse.decorators import observe, langfuse_context
+
 langfuse = Langfuse()
 
 app = FastAPI(title="Local & Free RAG Orchestrator (Hybrid Search + Memory)")
@@ -94,10 +95,11 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     answer: str
     sources: list[str]
+    trace_id: str # <-- Nouveau champ pour permettre au Frontend d'envoyer des notes
 
 
 # ---------------------------------------------------------
-# SOUS-FONCTIONS TRACÉES PAR LANGFUSE (V5)
+# SOUS-FONCTIONS TRACÉES PAR LANGFUSE (V2)
 # ---------------------------------------------------------
 
 @observe(name="query_rewriter")
@@ -123,20 +125,49 @@ def run_reranking(search_query: str, documents: list[str]) -> list[str]:
 
 @observe(as_type="generation", name="llm_generation")
 def run_llm_generation(provider: str, prompt: str) -> str:
+    # On précise le modèle à Langfuse pour le calcul des coûts
     if provider == "gemini":
+        model_name = "gemini-2.5-flash"
+        langfuse_context.update_current_observation(model=model_name)
+        
         if not gemini_client:
             raise HTTPException(status_code=500, detail="Clé API Gemini non configurée.")
-        response = gemini_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+        response = gemini_client.models.generate_content(model=model_name, contents=prompt)
+        
+        # Injection du décompte de tokens pour Gemini
+        if hasattr(response, "usage_metadata") and response.usage_metadata:
+             langfuse_context.update_current_observation(
+                 usage={
+                     "input": response.usage_metadata.prompt_token_count,
+                     "output": response.usage_metadata.candidates_token_count,
+                     "total": response.usage_metadata.total_token_count
+                 }
+             )
+        
         return response.text
         
     if provider == "mistral":
+        model_name = "mistral"
+        langfuse_context.update_current_observation(model=model_name)
+        
         ollama_url = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
         ollama_response = requests.post(
             f"{ollama_url}/api/generate",
-            json={"model": "mistral", "prompt": prompt, "stream": False}
+            json={"model": model_name, "prompt": prompt, "stream": False}
         )
         if ollama_response.status_code == 200:
-            return ollama_response.json().get("response", "")
+             response_json = ollama_response.json()
+             
+             # Injection du décompte de tokens pour Ollama
+             langfuse_context.update_current_observation(
+                 usage={
+                     "input": response_json.get("prompt_eval_count", 0),
+                     "output": response_json.get("eval_count", 0),
+                     "total": response_json.get("prompt_eval_count", 0) + response_json.get("eval_count", 0)
+                 }
+             )
+             
+             return response_json.get("response", "")
         raise HTTPException(status_code=500, detail="Erreur lors de l'appel à Ollama.")
         
     raise HTTPException(status_code=400, detail="Fournisseur non supporté.")
@@ -149,6 +180,21 @@ def run_llm_generation(provider: str, prompt: str) -> str:
 @observe(name="rag_cinema_pipeline")
 async def handle_chat(request: ChatRequest):
     try:
+        # Extraire l'ID de la trace courante (très utile pour l'envoi de scores)
+        trace_id = langfuse_context.get_current_trace_id()
+        
+        # Mettre à jour la trace avec les infos utilisateur
+        langfuse_context.update_current_trace(
+            session_id=request.session_id,
+            user_id=request.user_profile.name,
+            input=request.query,
+            metadata={
+                "role": request.user_profile.role,
+                "department": request.user_profile.department,
+                "provider": request.provider
+            }
+        )
+        
         # Étape 1 : Historique Redis
         chat_history = []
         history_text = "Aucun historique pour le moment."
@@ -174,9 +220,12 @@ async def handle_chat(request: ChatRequest):
         # Étape 5 & 6 : Prompt final
         system_context = f"""Tu es un assistant RAG d'entreprise expert.
 INFORMATIONS SUR L'UTILISATEUR ACTUEL :
-- Nom : {request.user_profile.name}
-- Rôle : {request.user_profile.role}
-- Département : {request.user_profile.department}
+- Nom : 
+{request.user_profile.name}
+- Rôle : 
+{request.user_profile.role}
+- Département : 
+{request.user_profile.department}
 Adapte tes réponses en fonction de ce profil métier."""
 
         context = "\n\n".join(reranked_docs)
@@ -197,6 +246,9 @@ Réponse :"""
 
         # Étape 7 : Génération de la réponse
         answer = run_llm_generation(request.provider, prompt)
+        
+        # Mettre à jour la trace complète avec la réponse générée
+        langfuse_context.update_current_trace(output=answer)
 
         # Étape 8 : Sauvegarde Redis
         if redis_client:
@@ -206,16 +258,29 @@ Réponse :"""
                 chat_history = chat_history[-(WINDOW_SIZE * 2):]
             redis_client.set(redis_key, json.dumps(chat_history), ex=7200)
 
+        # -------------------------------------------------------------
+        # Étape 9 : Envoi d'un score
+        # -------------------------------------------------------------
+        # ⚠️ Ceci simule un vote utilisateur pour que tu voies l'onglet Scores s'animer.
+        # Plus tard, tu pourras retirer ça d'ici et l'envoyer depuis Streamlit.
+        langfuse.score(
+            trace_id=trace_id,
+            name="qualite_rag_demo",
+            value=1,  # 1 = Pouce en l'air
+            comment="Note automatique générée par le backend"
+        )
 
         # Force l'envoi des données à Langfuse
         langfuse.flush() 
 
         return ChatResponse(
             answer=answer,
-            sources=reranked_docs
+            sources=reranked_docs,
+            trace_id=trace_id
         )
 
     except HTTPException:
         raise
     except Exception as e:
+        langfuse_context.update_current_trace(level="ERROR", status_message=str(e))
         raise HTTPException(status_code=500, detail=f"Erreur interne : {str(e)}")
