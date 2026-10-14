@@ -9,14 +9,17 @@ services:
       - "8000:8000"
     environment:
       - REDIS_HOST=redis
+      - LANGFUSE_HOST=http://langfuse-web:3000
     env_file:
       - .env
     volumes:
       - ./data:/app/data
+      - ./backend/src:/app
     networks:
       - chatbot_network
     depends_on:
       - redis
+      - langfuse-web
 
   frontend:
     build:
@@ -37,6 +40,43 @@ services:
       - "6379:6379"
     networks:
       - chatbot_network
+
+  # --- LANGFUSE SERVER ---
+  langfuse-web:
+    image: langfuse/langfuse:2
+    depends_on:
+      langfuse-db:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgresql://langfuse:langfuse_password@langfuse-db:5432/langfuse
+      - NEXTAUTH_URL=http://localhost:3000
+      - NEXTAUTH_SECRET=un_secret_tres_long_et_securise_123456789
+      - SALT=un_autre_secret_pour_le_sel_123456789
+      - TELEMETRY_ENABLED=false
+    networks:
+      - chatbot_network
+
+  # --- POSTGRESQL POUR LES TRACES LANGFUSE ---
+  langfuse-db:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=langfuse
+      - POSTGRES_PASSWORD=langfuse_password
+      - POSTGRES_DB=langfuse
+    volumes:
+      - langfuse_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    networks:
+      - chatbot_network
+
+volumes:
+  langfuse_postgres_data:
 
 networks:
   chatbot_network:

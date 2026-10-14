@@ -21,3 +21,6 @@ rank_bm25
 pandas
 redis==5.0.1
 python-dotenv==1.0.1
+
+# live tracking
+langfuse==2.53.9
