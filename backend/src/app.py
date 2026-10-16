@@ -28,6 +28,20 @@ from langfuse.decorators import observe, langfuse_context
 
 langfuse = Langfuse()
 
+# --- MLFLOW IMPORTS & CONFIGURATION ---
+import mlflow
+
+# Récupération de l'URL définie dans le docker-compose
+MLFLOW_URI = os.environ.get("MLFLOW_TRACKING_URI", "http://localhost:5000")
+mlflow.set_tracking_uri(MLFLOW_URI)
+mlflow.set_experiment("RAG_Cinema_Experiment")
+
+try:
+    from src.config import RAGConfig
+except ModuleNotFoundError:
+    from config import RAGConfig
+
+
 app = FastAPI(title="Local & Free RAG Orchestrator (Hybrid Search + Memory)")
 
 # ---------------------------------------------------------
@@ -36,7 +50,7 @@ app = FastAPI(title="Local & Free RAG Orchestrator (Hybrid Search + Memory)")
 REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 try:
     redis_client = redis.Redis(host=REDIS_HOST, port=6379, db=0, decode_responses=True)
-    WINDOW_SIZE = 4
+    WINDOW_SIZE = RAGConfig.REDIS_WINDOW_SIZE # <--- MODIFIÉ ICI
 except Exception as e:
     print(f"⚠️ Erreur de connexion à Redis : {e}")
     redis_client = None
@@ -50,17 +64,17 @@ except Exception:
 # 2. Configuration des chemins et modèles
 CHROMA_PATH = "./data/chroma_db"
 COLLECTION_NAME = "documents"
-MODEL_NAME = "all-MiniLM-L6-v2"
+# J'ai supprimé la variable MODEL_NAME car on utilise RAGConfig.EMBEDDING_MODEL directement
 
 embeddings = HuggingFaceEmbeddings(
-    model_name=MODEL_NAME,
+    model_name=RAGConfig.EMBEDDING_MODEL, # <--- MODIFIÉ ICI
     model_kwargs={'device': 'cuda' if os.environ.get("CUDA_VISIBLE_DEVICES") else 'cpu'}
 )
 
 # 3. Initialisation du Retriever Hybride
 print("🔄 Initialisation de la recherche hybride (ChromaDB + BM25)...")
 vectorstore = Chroma(persist_directory=CHROMA_PATH, collection_name=COLLECTION_NAME, embedding_function=embeddings)
-chroma_retriever = vectorstore.as_retriever(search_kwargs={"k": 20})
+chroma_retriever = vectorstore.as_retriever(search_kwargs={"k": RAGConfig.CHROMA_K}) # <--- MODIFIÉ ICI
 all_data = vectorstore.get()
 
 if not all_data or not all_data.get('documents'):
@@ -70,13 +84,16 @@ else:
 
 bm25_retriever = BM25Retriever.from_documents(all_docs) if all_docs else None
 if bm25_retriever:
-    bm25_retriever.k = 25
-    hybrid_retriever = EnsembleRetriever(retrievers=[bm25_retriever, chroma_retriever], weights=[0.3, 0.7])
+    bm25_retriever.k = RAGConfig.BM25_K # <--- MODIFIÉ ICI
+    hybrid_retriever = EnsembleRetriever(
+        retrievers=[bm25_retriever, chroma_retriever], 
+        weights=[RAGConfig.BM25_WEIGHT, RAGConfig.CHROMA_WEIGHT] # <--- MODIFIÉ ICI
+    )
 else:
     hybrid_retriever = chroma_retriever
 
 # 4. Initialisation du Reranker
-reranker = CrossEncoder("BAAI/bge-reranker-base")
+reranker = CrossEncoder(RAGConfig.RERANKER_MODEL) # <--- MODIFIÉ ICI
 
 
 class UserProfile(BaseModel):
@@ -88,7 +105,7 @@ class UserProfile(BaseModel):
 class ChatRequest(BaseModel):
     session_id: str
     query: str
-    provider: str = "gemini" 
+    provider: str = RAGConfig.DEFAULT_PROVIDER # <--- MODIFIÉ ICI
     top_k: int = 5
     user_profile: UserProfile = UserProfile()
 
@@ -254,7 +271,7 @@ Réponse :"""
         if redis_client:
             chat_history.append({"role": "Utilisateur", "content": request.query})
             chat_history.append({"role": "Assistant", "content": answer})
-            if len(chat_history) > (WINDOW_SIZE * 2):
+            if len(chat_history) > (WINDOW_SIZE * 2): # WINDOW_SIZE utilise maintenant RAGConfig.REDIS_WINDOW_SIZE
                 chat_history = chat_history[-(WINDOW_SIZE * 2):]
             redis_client.set(redis_key, json.dumps(chat_history), ex=7200)
 
@@ -282,5 +299,6 @@ Réponse :"""
     except HTTPException:
         raise
     except Exception as e:
-        langfuse_context.update_current_trace(level="ERROR", status_message=str(e))
-        raise HTTPException(status_code=500, detail=f"Erreur interne : {str(e)}")
+        # SUPPRIME totalement l'appel langfuse_context ici
+        print(f"🔥 ERREUR DANS HANDLE_CHAT : {e}", flush=True)
+        raise HTTPException(status_code=500, detail=str(e))

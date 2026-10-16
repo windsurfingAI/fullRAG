@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   backend:
     build:
@@ -10,6 +8,10 @@ services:
     environment:
       - REDIS_HOST=redis
       - LANGFUSE_HOST=http://langfuse-web:3000
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - OLLAMA_HOST=http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
       - .env
     volumes:
@@ -75,8 +77,25 @@ services:
     networks:
       - chatbot_network
 
+  # --- MLFLOW SERVER ---
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.12.1
+    ports:
+      - "5000:5000"
+    command: >
+      mlflow server
+      --backend-store-uri sqlite:////mlflow/mlflow.db
+      --artifacts-destination /mlflow/artifacts
+      --serve-artifacts
+      --host 0.0.0.0
+    volumes:
+      - mlflow_data:/mlflow
+    networks:
+      - chatbot_network
+
 volumes:
   langfuse_postgres_data:
+  mlflow_data:
 
 networks:
   chatbot_network:
