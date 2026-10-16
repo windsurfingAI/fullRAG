@@ -42,13 +42,13 @@ jobs:
     - name: Tester le Build de l'image Backend
       uses: docker/build-push-action@v5
       with:
-        context: .
-        file: backend/Dockerfile
-        push: false # Ne pousse pas sur un registre public (DockerHub) pour le test
+        context: ./backend
+        file: ./backend/Dockerfile
+        push: false
 
     - name: Tester le Build de l'image Frontend
       uses: docker/build-push-action@v5
       with:
-        context: .
-        file: frontend/Dockerfile
+        context: ./frontend
+        file: ./frontend/Dockerfile
         push: false
