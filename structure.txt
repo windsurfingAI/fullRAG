@@ -4,6 +4,7 @@
 │   ├── requirements.txt
 │   └── src
 │       ├── app.py
+│       ├── data
 │       ├── hybrid_search.py
 │       ├── __init__.py
 │       └── query_rewriter.py
@@ -42,10 +43,8 @@
 │   ├── requirements.txt
 │   └── src
 │       └── ui.py
-├── __pycache__
-│   ├── app.cpython-310.pyc
-│   └── app.cpython-313.pyc
 ├── README.md
+├── requirements-dev.txt
 └── structure.txt
 
-11 directories, 37 files
+11 directories, 36 files
