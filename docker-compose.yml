@@ -11,6 +11,8 @@ services:
       - LANGFUSE_HOST=http://langfuse-web:3000
       - MLFLOW_TRACKING_URI=http://mlflow:5000
       - OLLAMA_HOST=http://host.docker.internal:11434
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
     extra_hosts:
       - "host.docker.internal:host-gateway"
     env_file:

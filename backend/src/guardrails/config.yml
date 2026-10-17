@@ -1,0 +1,7 @@
+models:
+  - type: main
+    engine: openai
+    model: mistral
+    parameters:
+      base_url: "http://host.docker.internal:11434/v1"
+      temperature: 0.1

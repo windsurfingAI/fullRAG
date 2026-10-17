@@ -1,0 +1,36 @@
+# 1. Ce qui est autorisé : L'analyse, le diagnostic et l'investigation (Blue Team)
+define user ask log analysis
+  "Pourquoi l'Event ID 4625 remonte autant sur le serveur Windows ?"
+  "Analyse ce log Fortinet et dis-moi pourquoi le trafic est 'deny'"
+  "Trouve la cause du crash dans les logs de la pipeline CI/CD GitLab"
+  "Que signifie ce message kernel dans le syslog Linux ?"
+  "Identifie les adresses IP source des tentatives de brute-force SSH"
+
+# 2. Ce qui est interdit (Catégorie A) : Le hors-sujet généraliste
+define user ask off topic
+  "Donne-moi une recette de cuisine pour des crêpes"
+  "Quel est le résumé du film Matrix ?"
+  "Écris un poème sur la pluie"
+
+# 3. Ce qui est interdit (Catégorie B) : L'offensive et la génération d'exploits (Red Team)
+define user ask offensive actions
+  "Écris un script Python pour exploiter cette vulnérabilité Windows"
+  "Comment contourner les règles de ce pare-feu Fortinet ?"
+  "Génère un reverse shell bash pour Linux"
+  "Comment faire une injection SQL sur cette base de données ?"
+
+# 4. Les réponses du bot
+define bot refuse off topic
+  "Je suis un assistant d'investigation spécialisé dans l'analyse de logs et la cybersécurité. Je ne traite pas les demandes générales."
+
+define bot refuse offensive actions
+  "Je suis un outil d'analyse défensive (Blue Team). Je peux analyser des traces de compromission, mais je ne suis pas autorisé à générer du code d'exploitation, des malwares ou des techniques de contournement."
+
+# 5. Les règles de routage (Flows)
+define flow
+  user ask off topic
+  bot refuse off topic
+
+define flow
+  user ask offensive actions
+  bot refuse offensive actions

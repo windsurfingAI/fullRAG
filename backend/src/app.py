@@ -16,11 +16,11 @@ from langchain_core.documents import Document
 # Dépendance pour le Reranking
 from sentence_transformers import CrossEncoder
 
-# Correction de l'import pour Docker
-try:
-    from src.query_rewriter import rewrite_query
-except ModuleNotFoundError:
-    from query_rewriter import rewrite_query
+# Imports locaux
+import sys
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from query_rewriter import rewrite_query
+from anonymizer import sanitize_input
 
 # --- LANGFUSE IMPORTS ---
 from langfuse import Langfuse
@@ -41,12 +41,26 @@ try:
 except ModuleNotFoundError:
     from config import RAGConfig
 
-
 # anonymization
 from anonymizer import sanitize_input
 
+# --- Nemo the fish ---
+from nemoguardrails import LLMRails, RailsConfig
 
-app = FastAPI(title="Local & Free RAG Orchestrator (Hybrid Search + Memory)")
+app = FastAPI(title="Local & Free RAG Orchestrator (Hybrid Search + Memory + Security)")
+
+# ---------------------------------------------------------
+# INITIALISATION DE NEMO GUARDRAILS (AU DÉMARRAGE)
+# ---------------------------------------------------------
+print("🛡️ Chargement de NeMo Guardrails...")
+try:
+    # On pointe vers le dossier qui contient config.yml et cinema.co
+    rails_config = RailsConfig.from_path("./guardrails")
+    rails = LLMRails(rails_config)
+    print("✅ NeMo Guardrails opérationnel !")
+except Exception as e:
+    print(f"⚠️ Erreur d'initialisation de NeMo Guardrails : {e}")
+    rails = None
 
 # ---------------------------------------------------------
 # INITIALISATION DE REDIS
@@ -116,7 +130,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     answer: str
     sources: list[str]
-    trace_id: str # <-- Nouveau champ pour permettre au Frontend d'envoyer des notes
+    trace_id: str 
 
 
 # ---------------------------------------------------------
@@ -146,7 +160,6 @@ def run_reranking(search_query: str, documents: list[str]) -> list[str]:
 
 @observe(as_type="generation", name="llm_generation")
 def run_llm_generation(provider: str, prompt: str) -> str:
-    # On précise le modèle à Langfuse pour le calcul des coûts
     if provider == "gemini":
         model_name = "gemini-2.5-flash"
         langfuse_context.update_current_observation(model=model_name)
@@ -155,7 +168,6 @@ def run_llm_generation(provider: str, prompt: str) -> str:
             raise HTTPException(status_code=500, detail="Clé API Gemini non configurée.")
         response = gemini_client.models.generate_content(model=model_name, contents=prompt)
         
-        # Injection du décompte de tokens pour Gemini
         if hasattr(response, "usage_metadata") and response.usage_metadata:
              langfuse_context.update_current_observation(
                  usage={
@@ -178,8 +190,6 @@ def run_llm_generation(provider: str, prompt: str) -> str:
         )
         if ollama_response.status_code == 200:
              response_json = ollama_response.json()
-             
-             # Injection du décompte de tokens pour Ollama
              langfuse_context.update_current_observation(
                  usage={
                      "input": response_json.get("prompt_eval_count", 0),
@@ -187,7 +197,6 @@ def run_llm_generation(provider: str, prompt: str) -> str:
                      "total": response_json.get("prompt_eval_count", 0) + response_json.get("eval_count", 0)
                  }
              )
-             
              return response_json.get("response", "")
         raise HTTPException(status_code=500, detail="Erreur lors de l'appel à Ollama.")
         
@@ -204,7 +213,6 @@ def run_llm_generation(provider: str, prompt: str) -> str:
 @observe(name="rag_cinema_pipeline")
 async def handle_chat(request: ChatRequest):
     try:
-        # Extraire l'ID de la trace courante
         trace_id = langfuse_context.get_current_trace_id()
         
         # --- 1. SÉCURITÉ & PRIVACY : Presidio ---
@@ -214,20 +222,46 @@ async def handle_chat(request: ChatRequest):
         # Si on détecte des choses, on extrait juste le nom des entités pour les logs (sans la vraie donnée)
         pii_metadata = [r.entity_type for r in detected_pii] if detected_pii else []
         
-        # Mettre à jour la trace avec la requête NETTOYÉE (pour ne pas stocker de PII en clair sur Langfuse)
+        # Mettre à jour la trace avec la requête NETTOYÉE
         langfuse_context.update_current_trace(
             session_id=request.session_id,
             user_id=request.user_profile.name,
-            input=clean_query,  # <--- Utilisation de la requête nettoyée
+            input=clean_query,
             metadata={
                 "role": request.user_profile.role,
                 "department": request.user_profile.department,
                 "provider": request.provider,
-                "pii_detected": pii_metadata # Indique à Langfuse ce qui a été masqué
+                "pii_masked": bool(detected_pii), # Vrai si on a détecté quelque chose
+                "pii_entities_found": pii_metadata # Ex: ["EMAIL_ADDRESS"]
             }
         )
-        
-        # Étape 1 : Historique Redis
+
+        # =========================================================
+        # ÉTAPE 0.2 : SÉCURITÉ (NeMo Guardrails)
+        # =========================================================
+        if rails:
+            # On vérifie l'intention avant d'activer le RAG
+            nemo_response = await rails.generate_async(messages=[
+                {"role": "user", "content": clean_query}
+            ])
+
+            print(f"🤖 [DEBUG NEMO] : {nemo_response['content']}", flush=True)
+            
+            # Si NeMo déclenche la phrase de refus (définie dans cinema.co)
+            if "strictement dédié au cinéma" in nemo_response["content"]:
+                langfuse_context.update_current_trace(
+                    output=nemo_response["content"], 
+                    tags=["blocked_by_guardrails"]
+                )
+                return ChatResponse(
+                    answer=nemo_response["content"],
+                    sources=["⚠️ Requête bloquée (Hors-sujet ou Injection de prompt)"],
+                    trace_id=trace_id
+                )
+
+        # =========================================================
+        # ÉTAPE 1 à 8 : RAG CLASSIQUE
+        # =========================================================
         chat_history = []
         history_text = "Aucun historique pour le moment."
         redis_key = f"session:{request.session_id}"
@@ -241,23 +275,17 @@ async def handle_chat(request: ChatRequest):
         # Étape 2 : Réécriture de la requête (sur la base du texte propre)
         search_query = run_query_rewrite(clean_query, chat_history, request.provider)
 
-        # Étape 3 : Recherche Hybride
         documents = run_hybrid_retrieval(search_query)
         if not documents:
             raise HTTPException(status_code=404, detail="Aucun document trouvé dans la base.")
 
-        # Étape 4 : Reranking Local
         reranked_docs = run_reranking(search_query, documents)
 
-        # Étape 5 & 6 : Prompt final
         system_context = f"""Tu es un assistant RAG d'entreprise expert.
 INFORMATIONS SUR L'UTILISATEUR ACTUEL :
-- Nom : 
-{request.user_profile.name}
-- Rôle : 
-{request.user_profile.role}
-- Département : 
-{request.user_profile.department}
+- Nom : {request.user_profile.name}
+- Rôle : {request.user_profile.role}
+- Département : {request.user_profile.department}
 Adapte tes réponses en fonction de ce profil métier."""
 
         context = "\n\n".join(reranked_docs)
@@ -273,16 +301,13 @@ INSTRUCTION :
 Réponds à la nouvelle question en te basant UNIQUEMENT sur le contexte documentaire fourni. 
 Si la réponse ne s'y trouve pas, dis-le. Prends en compte l'historique si la question contient des pronoms.
 
-Nouvelle question : {clean_query}  # <--- Utilisation de la requête nettoyée
+Nouvelle question : {clean_query}
 Réponse :"""
 
-        # Étape 7 : Génération de la réponse
         answer = run_llm_generation(request.provider, prompt)
         
-        # Mettre à jour la trace complète avec la réponse générée
         langfuse_context.update_current_trace(output=answer)
 
-        # Étape 8 : Sauvegarde Redis (On sauvegarde la clean_query pour ne pas re-polluer l'historique plus tard)
         if redis_client:
             chat_history.append({"role": "Utilisateur", "content": clean_query})
             chat_history.append({"role": "Assistant", "content": answer})
@@ -291,16 +316,18 @@ Réponse :"""
             redis_client.set(redis_key, json.dumps(chat_history), ex=7200)
 
         # -------------------------------------------------------------
-        # Étape 9 : Envoi d'un score (simulation)
+        # Étape 9 : Envoi d'un score
         # -------------------------------------------------------------
-        # NOTE: Si `score` posait problème dans Ragas, remplace ici aussi par `create_score` si tu es sur une API Langfuse récente
-        langfuse.create_score(
+        # ⚠️ Ceci simule un vote utilisateur pour que tu voies l'onglet Scores s'animer.
+        # Plus tard, tu pourras retirer ça d'ici et l'envoyer depuis Streamlit.
+        langfuse.score(
             trace_id=trace_id,
             name="qualite_rag_demo",
-            value=1,  
+            value=1,  # 1 = Pouce en l'air
             comment="Note automatique générée par le backend"
         )
 
+        # Force l'envoi des données à Langfuse
         langfuse.flush() 
 
         return ChatResponse(
