@@ -10,6 +10,8 @@ services:
     environment:
       - REDIS_HOST=redis
       - LANGFUSE_HOST=http://langfuse-web:3000
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app    # <--- LA LIGNE MAGIQUE À AJOUTER
     env_file:
       - .env
     volumes:

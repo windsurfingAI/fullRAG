@@ -1,0 +1,12 @@
+models:
+  - type: main
+    engine: openai  # Ollama est compatible avec l'API OpenAI
+    model: mistral  # Remplace par le nom exact de ton modèle Ollama
+    parameters:
+      base_url: "http://host.docker.internal:11434/v1"
+      temperature: 0.1
+
+rails:
+  input:
+    flows:
+      - check jailbreak  # Règle de sécurité native de NeMo

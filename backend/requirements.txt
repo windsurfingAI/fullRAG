@@ -24,3 +24,8 @@ python-dotenv==1.0.1
 
 # live tracking
 langfuse==2.53.9
+
+# Nemo Guard
+nemoguardrails
+openai
+nest_asyncio
