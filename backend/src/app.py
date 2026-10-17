@@ -42,6 +42,10 @@ except ModuleNotFoundError:
     from config import RAGConfig
 
 
+# anonymization
+from anonymizer import sanitize_input
+
+
 app = FastAPI(title="Local & Free RAG Orchestrator (Hybrid Search + Memory)")
 
 # ---------------------------------------------------------
@@ -193,22 +197,33 @@ def run_llm_generation(provider: str, prompt: str) -> str:
 # ---------------------------------------------------------
 # ENDPOINT PRINCIPAL
 # ---------------------------------------------------------
+# ---------------------------------------------------------
+# ENDPOINT PRINCIPAL
+# ---------------------------------------------------------
 @app.post("/chat", response_model=ChatResponse)
 @observe(name="rag_cinema_pipeline")
 async def handle_chat(request: ChatRequest):
     try:
-        # Extraire l'ID de la trace courante (très utile pour l'envoi de scores)
+        # Extraire l'ID de la trace courante
         trace_id = langfuse_context.get_current_trace_id()
         
-        # Mettre à jour la trace avec les infos utilisateur
+        # --- 1. SÉCURITÉ & PRIVACY : Presidio ---
+        # On nettoie la requête AVANT toute autre opération
+        clean_query, detected_pii = sanitize_input(request.query, language="fr")
+        
+        # Si on détecte des choses, on extrait juste le nom des entités pour les logs (sans la vraie donnée)
+        pii_metadata = [r.entity_type for r in detected_pii] if detected_pii else []
+        
+        # Mettre à jour la trace avec la requête NETTOYÉE (pour ne pas stocker de PII en clair sur Langfuse)
         langfuse_context.update_current_trace(
             session_id=request.session_id,
             user_id=request.user_profile.name,
-            input=request.query,
+            input=clean_query,  # <--- Utilisation de la requête nettoyée
             metadata={
                 "role": request.user_profile.role,
                 "department": request.user_profile.department,
-                "provider": request.provider
+                "provider": request.provider,
+                "pii_detected": pii_metadata # Indique à Langfuse ce qui a été masqué
             }
         )
         
@@ -223,8 +238,8 @@ async def handle_chat(request: ChatRequest):
                 chat_history = json.loads(history_json)
                 history_text = "\n".join([f"{msg['role']}: {msg['content']}" for msg in chat_history])
 
-        # Étape 2 : Réécriture de la requête
-        search_query = run_query_rewrite(request.query, chat_history, request.provider)
+        # Étape 2 : Réécriture de la requête (sur la base du texte propre)
+        search_query = run_query_rewrite(clean_query, chat_history, request.provider)
 
         # Étape 3 : Recherche Hybride
         documents = run_hybrid_retrieval(search_query)
@@ -258,7 +273,7 @@ INSTRUCTION :
 Réponds à la nouvelle question en te basant UNIQUEMENT sur le contexte documentaire fourni. 
 Si la réponse ne s'y trouve pas, dis-le. Prends en compte l'historique si la question contient des pronoms.
 
-Nouvelle question : {request.query}
+Nouvelle question : {clean_query}  # <--- Utilisation de la requête nettoyée
 Réponse :"""
 
         # Étape 7 : Génération de la réponse
@@ -267,27 +282,25 @@ Réponse :"""
         # Mettre à jour la trace complète avec la réponse générée
         langfuse_context.update_current_trace(output=answer)
 
-        # Étape 8 : Sauvegarde Redis
+        # Étape 8 : Sauvegarde Redis (On sauvegarde la clean_query pour ne pas re-polluer l'historique plus tard)
         if redis_client:
-            chat_history.append({"role": "Utilisateur", "content": request.query})
+            chat_history.append({"role": "Utilisateur", "content": clean_query})
             chat_history.append({"role": "Assistant", "content": answer})
-            if len(chat_history) > (WINDOW_SIZE * 2): # WINDOW_SIZE utilise maintenant RAGConfig.REDIS_WINDOW_SIZE
+            if len(chat_history) > (WINDOW_SIZE * 2):
                 chat_history = chat_history[-(WINDOW_SIZE * 2):]
             redis_client.set(redis_key, json.dumps(chat_history), ex=7200)
 
         # -------------------------------------------------------------
-        # Étape 9 : Envoi d'un score
+        # Étape 9 : Envoi d'un score (simulation)
         # -------------------------------------------------------------
-        # ⚠️ Ceci simule un vote utilisateur pour que tu voies l'onglet Scores s'animer.
-        # Plus tard, tu pourras retirer ça d'ici et l'envoyer depuis Streamlit.
-        langfuse.score(
+        # NOTE: Si `score` posait problème dans Ragas, remplace ici aussi par `create_score` si tu es sur une API Langfuse récente
+        langfuse.create_score(
             trace_id=trace_id,
             name="qualite_rag_demo",
-            value=1,  # 1 = Pouce en l'air
+            value=1,  
             comment="Note automatique générée par le backend"
         )
 
-        # Force l'envoi des données à Langfuse
         langfuse.flush() 
 
         return ChatResponse(
@@ -299,6 +312,5 @@ Réponse :"""
     except HTTPException:
         raise
     except Exception as e:
-        # SUPPRIME totalement l'appel langfuse_context ici
         print(f"🔥 ERREUR DANS HANDLE_CHAT : {e}", flush=True)
         raise HTTPException(status_code=500, detail=str(e))
