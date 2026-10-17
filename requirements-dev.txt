@@ -14,4 +14,3 @@ streamlit==1.36.0
 # Évaluation & Tracking d'expériences
 ragas==0.4.3
 mlflow>=2.15.0
-

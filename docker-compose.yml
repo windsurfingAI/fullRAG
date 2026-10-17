@@ -3,6 +3,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      target: dev  # <--- MAGIE ICI : Compose s'arrête à l'étape dev (inclut pytest)
     ports:
       - "8000:8000"
     environment:
@@ -17,6 +18,7 @@ services:
     volumes:
       - ./data:/app/data
       - ./backend/src:/app
+      - ./backend/tests:/app/tests  # <--- Ajout pour monter tes tests
     networks:
       - chatbot_network
     depends_on:
