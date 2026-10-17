@@ -1,22 +1,26 @@
-version: '3.8'
-
 services:
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      target: dev  # <--- MAGIE ICI : Compose s'arrête à l'étape dev (inclut pytest)
     ports:
       - "8000:8000"
     environment:
       - REDIS_HOST=redis
       - LANGFUSE_HOST=http://langfuse-web:3000
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - OLLAMA_HOST=http://host.docker.internal:11434
       - PYTHONUNBUFFERED=1
-      - PYTHONPATH=/app    # <--- LA LIGNE MAGIQUE À AJOUTER
+      - PYTHONPATH=/app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
       - .env
     volumes:
       - ./data:/app/data
       - ./backend/src:/app
+      - ./backend/tests:/app/tests  # <--- Ajout pour monter tes tests
     networks:
       - chatbot_network
     depends_on:
@@ -77,8 +81,25 @@ services:
     networks:
       - chatbot_network
 
+  # --- MLFLOW SERVER ---
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.12.1
+    ports:
+      - "5000:5000"
+    command: >
+      mlflow server
+      --backend-store-uri sqlite:////mlflow/mlflow.db
+      --artifacts-destination /mlflow/artifacts
+      --serve-artifacts
+      --host 0.0.0.0
+    volumes:
+      - mlflow_data:/mlflow
+    networks:
+      - chatbot_network
+
 volumes:
   langfuse_postgres_data:
+  mlflow_data:
 
 networks:
   chatbot_network:

@@ -2,11 +2,16 @@
 ├── backend
 │   ├── Dockerfile
 │   ├── requirements.txt
-│   └── src
-│       ├── app.py
-│       ├── hybrid_search.py
-│       ├── __init__.py
-│       └── query_rewriter.py
+│   ├── src
+│   │   ├── anonymizer.py
+│   │   ├── app.py
+│   │   ├── config.py
+│   │   ├── data
+│   │   ├── hybrid_search.py
+│   │   ├── __init__.py
+│   │   └── query_rewriter.py
+│   └── tests
+│       └── test_anonymizer.py
 ├── data
 │   ├── chroma_db
 │   │   ├── 402dd703-3723-4dcc-8615-d3dcc832e5c3
@@ -42,10 +47,8 @@
 │   ├── requirements.txt
 │   └── src
 │       └── ui.py
-├── __pycache__
-│   ├── app.cpython-310.pyc
-│   └── app.cpython-313.pyc
 ├── README.md
+├── requirements-dev.txt
 └── structure.txt
 
-11 directories, 37 files
+12 directories, 39 files
